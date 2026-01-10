@@ -15,7 +15,7 @@ If the `-outputPreserveGroups` flag is provided, there will be folders created t
 
 replacing files example:
 ```
-echoFileTools -mode replace -outputDir ./output/ -packageName 48037dc70b0ecab2 -dataDir ./ready-at-dawn-echo-arena/_data/5932408047/rad15/win10 -inputDir ./input/
+evrFileTools -mode replace -outputDir ./output/ -packageName 48037dc70b0ecab2 -dataDir ./ready-at-dawn-echo-arena/_data/5932408047/rad15/win10 -inputDir ./input/
 ```
 Directory structure of inputDir while using `-mode replace` should be `./inputFolder/0/...`, where ... is the structure of `-mode extract` *without* the `-outputPreserveGroups` flag.
 
