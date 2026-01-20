@@ -1,5 +1,5 @@
-module github.com/goopsie/evrFileTools
+module github.com/EchoTools/evrFileTools
 
-go 1.21.5
+go 1.22.0
 
-require github.com/DataDog/zstd v1.5.5
+require github.com/DataDog/zstd v1.5.7
