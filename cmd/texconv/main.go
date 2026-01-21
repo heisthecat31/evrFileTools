@@ -240,7 +240,60 @@ func decodeDDS(inputPath, outputPath string) error {
 
 // encodeDDS reads a PNG and converts it to DDS
 func encodeDDS(inputPath, outputPath string) error {
-	return fmt.Errorf("encode not yet implemented - requires BC compression library")
+	// Read PNG file
+	f, err := os.Open(inputPath)
+	if err != nil {
+		return fmt.Errorf("open: %w", err)
+	}
+	defer f.Close()
+
+	img, err := png.Decode(f)
+	if err != nil {
+		return fmt.Errorf("decode png: %w", err)
+	}
+
+	// Auto-detect best BC format
+	format := DetectBCFormat(img)
+	var dxgiFormat uint32
+	switch format {
+	case BC1:
+		dxgiFormat = DXGIFormatBC1Unorm
+	case BC3:
+		dxgiFormat = DXGIFormatBC3Unorm
+	default:
+		return fmt.Errorf("unsupported format: %d", format)
+	}
+
+	// Generate mipmaps
+	mipmaps := GenerateMipmaps(img)
+
+	// Compress all mip levels
+	var compressedData []byte
+	for _, mip := range mipmaps {
+		compressed, err := CompressBC(mip, format)
+		if err != nil {
+			return fmt.Errorf("compress mip: %w", err)
+		}
+		compressedData = append(compressedData, compressed...)
+	}
+
+	// Write DDS file
+	outFile, err := os.Create(outputPath)
+	if err != nil {
+		return fmt.Errorf("create output: %w", err)
+	}
+	defer outFile.Close()
+
+	bounds := img.Bounds()
+	width := uint32(bounds.Dx())
+	height := uint32(bounds.Dy())
+	mipCount := uint32(len(mipmaps))
+
+	if err := writeDDSFile(outFile, width, height, mipCount, dxgiFormat, compressedData); err != nil {
+		return fmt.Errorf("write dds: %w", err)
+	}
+
+	return nil
 }
 
 // showInfo displays information about a DDS file
@@ -650,6 +703,67 @@ func decompressBC5(data []byte, width, height int) (*image.RGBA, error) {
 	// BC5 stores two channels (RG for normal maps)
 	// We'll decode them and reconstruct Z = sqrt(1 - X^2 - Y^2)
 	return nil, fmt.Errorf("BC5 decompression not yet implemented")
+}
+
+// writeDDSFile writes a complete DDS file with DX10 header
+func writeDDSFile(w io.Writer, width, height, mipCount, dxgiFormat uint32, compressedData []byte) error {
+	// Calculate pitch/linear size
+	var bytesPerBlock uint32
+	switch dxgiFormat {
+	case DXGIFormatBC1Unorm, DXGIFormatBC1UnormSRGB:
+		bytesPerBlock = 8
+	case DXGIFormatBC3Unorm, DXGIFormatBC3UnormSRGB, DXGIFormatBC5Unorm, DXGIFormatBC5SNorm:
+		bytesPerBlock = 16
+	default:
+		return fmt.Errorf("unsupported DXGI format: %d", dxgiFormat)
+	}
+
+	blocksWide := (width + 3) / 4
+	blocksHigh := (height + 3) / 4
+	linearSize := blocksWide * blocksHigh * bytesPerBlock
+
+	// Build DDS header
+	header := DDSHeader{
+		Magic:             DDSMagic,
+		Size:              124,
+		Flags:             DDSFlagCaps | DDSFlagHeight | DDSFlagWidth | DDSFlagPixelFormat | DDSFlagMipMapCount | DDSFlagLinearSize,
+		Height:            height,
+		Width:             width,
+		PitchOrLinearSize: linearSize,
+		Depth:             0,
+		MipMapCount:       mipCount,
+		PixelFormat: DDSPixelFormat{
+			Size:   32,
+			Flags:  DDPFFourCC,
+			FourCC: [4]byte{'D', 'X', '1', '0'}, // Use DX10 extension
+		},
+		Caps:  0x1000 | 0x400000, // DDSCAPS_TEXTURE | DDSCAPS_MIPMAP
+		Caps2: 0,
+	}
+
+	// Build DX10 header
+	dx10 := DDSDX10Header{
+		DXGIFormat:        dxgiFormat,
+		ResourceDimension: 3, // D3D10_RESOURCE_DIMENSION_TEXTURE2D
+		MiscFlag:          0,
+		ArraySize:         1,
+		MiscFlags2:        0,
+	}
+
+	// Write headers
+	if err := binary.Write(w, binary.LittleEndian, &header); err != nil {
+		return fmt.Errorf("write header: %w", err)
+	}
+	if err := binary.Write(w, binary.LittleEndian, &dx10); err != nil {
+		return fmt.Errorf("write dx10 header: %w", err)
+	}
+
+	// Write compressed data
+	if _, err := w.Write(compressedData); err != nil {
+		return fmt.Errorf("write compressed data: %w", err)
+	}
+
+	return nil
 }
 
 func max(a, b uint32) uint32 {
