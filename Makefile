@@ -10,7 +10,7 @@ help:
 	@echo "Usage: make [target]"
 	@echo ""
 	@echo "Targets:"
-	@echo "  build         Build the CLI tool to bin/evrtools"
+	@echo "  build         Build CLI tools (evrtools, showtints, texconv)"
 	@echo "  test          Run all tests"
 	@echo "  bench         Run benchmarks"
 	@echo "  bench-compare Run benchmarks with multiple iterations"
@@ -24,6 +24,7 @@ help:
 build:
 	go build -o bin/evrtools ./cmd/evrtools
 	go build -o bin/showtints ./cmd/showtints
+	go build -o bin/texconv ./cmd/texconv
 
 # Run all tests
 test:
