@@ -9,6 +9,10 @@ A Go library and CLI tool for working with EVR (Echo VR) package and manifest fi
 - Extract files from EVR packages
 - Build new packages from extracted files
 - Read and write EVR manifest files
+- **Full texture conversion pipeline**: DDS ↔ PNG with BC1/BC3 compression
+  - Decode: DDS → PNG (lossless storage for editing)
+  - Encode: PNG → DDS with automatic format detection and mipmap generation
+  - Supports BC1 (DXT1), BC3 (DXT5), BC5 (partial)
 - Parse texture metadata and convert raw BC textures to DDS
 - Display and export tint color data as CSS
 - Parse audio and asset reference structures
@@ -19,6 +23,7 @@ A Go library and CLI tool for working with EVR (Echo VR) package and manifest fi
 ```bash
 go install github.com/EchoTools/evrFileTools/cmd/evrtools@latest
 go install github.com/EchoTools/evrFileTools/cmd/showtints@latest
+go install github.com/EchoTools/evrFileTools/cmd/texconv@latest
 ```
 
 Or build from source:
@@ -27,6 +32,11 @@ Or build from source:
 git clone https://github.com/EchoTools/evrFileTools.git
 cd evrFileTools
 make build
+```
+
+**Note**: `texconv` requires `libsquish` for BC compression. On Arch Linux:
+```bash
+sudo pacman -S libsquish
 ```
 
 ## Usage
@@ -77,6 +87,32 @@ showtints --summary ./extracted
 showtints --known --nonzero ./extracted
 ```
 
+### texconv - Texture Converter
+
+Convert between DDS (BC-compressed) and PNG (lossless) formats:
+
+```bash
+# Decode DDS to PNG for editing
+texconv decode texture.dds texture.png
+
+# Encode PNG back to DDS with automatic format detection
+texconv encode texture.png texture.dds
+
+# Show texture information
+texconv info texture.dds
+
+# Batch convert directory
+texconv batch decode _extracted/ png_output/
+texconv batch encode png_input/ dds_output/
+```
+
+**Features**:
+- **BC1 (DXT1)**: RGB + 1-bit alpha, 4 bits/pixel, ~60% of EchoVR textures
+- **BC3 (DXT5)**: RGBA with 8-bit alpha, 8 bits/pixel, ~20% of EchoVR textures
+- **Automatic format detection**: Analyzes alpha usage to choose optimal format
+- **Mipmap generation**: Box filter downsampling for complete mip chains
+- **Round-trip tested**: PNG → DDS → PNG preserves visual quality
+
 ### CLI Options
 
 ### CLI Options
@@ -102,6 +138,17 @@ showtints --known --nonzero ./extracted
 | `-nonzero` | Only show entries with non-zero color data |
 | `-summary` | Only show summary statistics |
 | `-raw` | Show raw hex bytes (default: true) |
+
+#### texconv
+
+| Command | Description |
+|---------|-------------|
+| `decode <in.dds> <out.png>` | Decompress DDS to PNG |
+| `encode <in.png> <out.dds>` | Compress PNG to DDS |
+| `info <file.dds>` | Display texture information |
+| `batch <mode> <indir> <outdir>` | Batch convert directory |
+
+**Supported formats**: BC1 (DXT1), BC3 (DXT5), BC5 (partial), BC6H/BC7 (decode only)
 
 ## Library Usage
 
@@ -188,7 +235,12 @@ fmt.Println(css)
 evrFileTools/
 ├── cmd/
 │   ├── evrtools/            # Package extraction/building CLI
-│   └── showtints/           # Tint display and CSS export CLI
+│   ├── showtints/           # Tint display and CSS export CLI
+│   └── texconv/             # DDS ↔ PNG texture converter
+│       ├── main.go          # CLI and DDS format handling
+│       ├── encoder.go       # BC compression (libsquish via CGo)
+│       ├── squish_wrapper.cpp  # C++ wrapper for libsquish
+│       └── squish_wrapper.h    # C header for CGo
 ├── pkg/
 │   ├── archive/             # ZSTD archive format
 │   │   ├── header.go        # Archive header (24 bytes)
@@ -208,7 +260,9 @@ evrFileTools/
 │   └── asset/               # Asset reference structures
 │       └── asset.go         # Asset reference parsing
 ├── docs/
-│   └── ASSET_FORMATS.md     # Complete format specifications
+│   ├── ASSET_FORMATS.md     # Complete format specifications
+│   ├── TEXTURE_FORMAT_VERIFIED.md  # Texture format analysis
+│   └── LEVEL_FORMAT_INVESTIGATION.md  # Level/scene format research
 ├── Makefile
 └── go.mod
 ```
@@ -239,6 +293,8 @@ make check
   - Asset References
   - Tints
   - Packages and Manifests
+- **[TEXTURE_FORMAT_VERIFIED.md](docs/TEXTURE_FORMAT_VERIFIED.md)** - Detailed texture format analysis and verification
+- **[LEVEL_FORMAT_INVESTIGATION.md](docs/LEVEL_FORMAT_INVESTIGATION.md)** - Level/scene format research (preliminary)
 
 ## Performance
 
