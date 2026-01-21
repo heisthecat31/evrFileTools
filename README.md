@@ -9,12 +9,16 @@ A Go library and CLI tool for working with EVR (Echo VR) package and manifest fi
 - Extract files from EVR packages
 - Build new packages from extracted files
 - Read and write EVR manifest files
+- Parse texture metadata and convert raw BC textures to DDS
+- Display and export tint color data as CSS
+- Parse audio and asset reference structures
 - ZSTD compression/decompression with optimized context reuse
 
 ## Installation
 
 ```bash
 go install github.com/EchoTools/evrFileTools/cmd/evrtools@latest
+go install github.com/EchoTools/evrFileTools/cmd/showtints@latest
 ```
 
 Or build from source:
@@ -27,7 +31,9 @@ make build
 
 ## Usage
 
-### Extract files from a package
+### evrtools - Package Management
+
+#### Extract files from a package
 
 ```bash
 evrtools -mode extract \
@@ -53,7 +59,29 @@ evrtools -mode build \
 
 Expected input structure: `./input/<frameIndex>/<typeSymbol>/<fileSymbol>`
 
+### showtints - Tint Color Display
+
+Display tint color data from extracted files:
+
+```bash
+# Show all tints with details
+showtints ./extracted
+
+# Export tints as CSS custom properties
+showtints --css --known ./extracted > tints.css
+
+# Show summary only
+showtints --summary ./extracted
+
+# Filter options
+showtints --known --nonzero ./extracted
+```
+
 ### CLI Options
+
+### CLI Options
+
+#### evrtools
 
 | Flag | Description |
 |------|-------------|
@@ -65,7 +93,19 @@ Expected input structure: `./input/<frameIndex>/<typeSymbol>/<fileSymbol>`
 | `-preserve-groups` | Preserve frame grouping in extract output |
 | `-force` | Allow non-empty output directory |
 
+#### showtints
+
+| Flag | Description |
+|------|-------------|
+| `-css` | Output tints as CSS custom properties |
+| `-known` | Only show entries matching known tint hashes |
+| `-nonzero` | Only show entries with non-zero color data |
+| `-summary` | Only show summary statistics |
+| `-raw` | Show raw hex bytes (default: true) |
+
 ## Library Usage
+
+### Package Extraction
 
 ```go
 package main
@@ -98,22 +138,77 @@ func main() {
 }
 ```
 
+### Texture Processing
+
+```go
+import (
+    "github.com/EchoTools/evrFileTools/pkg/texture"
+    "io/ioutil"
+)
+
+// Parse texture metadata
+metaData, _ := ioutil.ReadFile("texture.meta")
+meta, _ := texture.ParseMetadata(bytes.NewReader(metaData))
+
+// Convert raw BC texture to DDS
+rawData, _ := ioutil.ReadFile("texture.raw")
+ddsData, _ := texture.ConvertRawBCToDDS(rawData, meta)
+
+// Write DDS file
+ioutil.WriteFile("texture.dds", ddsData, 0644)
+```
+
+### Tint Processing
+
+```go
+import (
+    "github.com/EchoTools/evrFileTools/pkg/tint"
+    "os"
+)
+
+// Read tint entry
+file, _ := os.Open("tint_file")
+defer file.Close()
+
+entry, _ := tint.ReadTintEntry(file)
+
+// Access colors
+for i, color := range entry.Colors {
+    fmt.Printf("Color %d: %s (%s)\n", i, color.String(), color.Hex())
+}
+
+// Export as CSS
+css := entry.ToCSS("my-tint-name")
+fmt.Println(css)
+```
+
 ## Project Structure
 
 ```
 evrFileTools/
 ├── cmd/
-│   └── evrtools/           # CLI application
+│   ├── evrtools/            # Package extraction/building CLI
+│   └── showtints/           # Tint display and CSS export CLI
 ├── pkg/
-│   ├── archive/            # ZSTD archive format
-│   │   ├── header.go       # Archive header (24 bytes)
-│   │   ├── reader.go       # Streaming decompression
-│   │   └── writer.go       # Streaming compression
-│   └── manifest/           # EVR manifest/package handling
-│       ├── manifest.go     # Manifest types and binary encoding
-│       ├── package.go      # Multi-part package extraction
-│       ├── builder.go      # Package building from files
-│       └── scanner.go      # Input directory scanning
+│   ├── archive/             # ZSTD archive format
+│   │   ├── header.go        # Archive header (24 bytes)
+│   │   ├── reader.go        # Streaming decompression
+│   │   └── writer.go        # Streaming compression
+│   ├── manifest/            # EVR manifest/package handling
+│   │   ├── manifest.go      # Manifest types and binary encoding
+│   │   ├── package.go       # Multi-part package extraction
+│   │   ├── builder.go       # Package building from files
+│   │   └── scanner.go       # Input directory scanning
+│   ├── texture/             # Texture metadata and conversion
+│   │   └── texture.go       # DDS header generation, BC conversion
+│   ├── tint/                # Tint color processing
+│   │   └── tint.go          # Tint parsing and CSS export
+│   ├── audio/               # Audio reference structures
+│   │   └── audio.go         # Audio reference parsing
+│   └── asset/               # Asset reference structures
+│       └── asset.go         # Asset reference parsing
+├── docs/
+│   └── ASSET_FORMATS.md     # Complete format specifications
 ├── Makefile
 └── go.mod
 ```
@@ -133,6 +228,17 @@ make bench
 # Format and lint
 make check
 ```
+
+## Documentation
+
+- **[ASSET_FORMATS.md](docs/ASSET_FORMATS.md)** - Complete binary format specifications for all asset types
+  - DDS Textures
+  - Raw BC Textures  
+  - Texture Metadata
+  - Audio References
+  - Asset References
+  - Tints
+  - Packages and Manifests
 
 ## Performance
 

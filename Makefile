@@ -20,9 +20,10 @@ help:
 	@echo "  lint          Run go vet"
 	@echo "  check         Run fmt, lint, and test"
 
-# Build the CLI tool
+# Build the CLI tools
 build:
 	go build -o bin/evrtools ./cmd/evrtools
+	go build -o bin/showtints ./cmd/showtints
 
 # Run all tests
 test:
