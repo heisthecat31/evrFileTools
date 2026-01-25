@@ -20,13 +20,23 @@ A Go library and CLI tool for working with EVR (Echo VR) package and manifest fi
 
 ## Installation
 
+### Requirements
+
+- **Go 1.22.0 or later** - Required for building from source
+- **libsquish** (optional) - Required for PNG → DDS encoding in `texconv`
+  - Ubuntu/Debian: `sudo apt-get install libsquish-dev`
+  - Arch Linux: `sudo pacman -S libsquish`
+  - macOS: `brew install squish`
+
+### Install via Go
+
 ```bash
 go install github.com/EchoTools/evrFileTools/cmd/evrtools@latest
 go install github.com/EchoTools/evrFileTools/cmd/showtints@latest
 go install github.com/EchoTools/evrFileTools/cmd/texconv@latest
 ```
 
-Or build from source:
+### Build from Source
 
 ```bash
 git clone https://github.com/EchoTools/evrFileTools.git
@@ -34,10 +44,7 @@ cd evrFileTools
 make build
 ```
 
-**Note**: `texconv` requires `libsquish` for BC compression. On Arch Linux:
-```bash
-sudo pacman -S libsquish
-```
+Binaries will be available in the `bin/` directory.
 
 ## Usage
 
@@ -112,8 +119,6 @@ texconv batch encode png_input/ dds_output/
 - **Automatic format detection**: Analyzes alpha usage to choose optimal format
 - **Mipmap generation**: Box filter downsampling for complete mip chains
 - **Round-trip tested**: PNG → DDS → PNG preserves visual quality
-
-### CLI Options
 
 ### CLI Options
 
@@ -261,6 +266,7 @@ evrFileTools/
 │       └── asset.go         # Asset reference parsing
 ├── docs/
 │   ├── ASSET_FORMATS.md     # Complete format specifications
+│   ├── IMPLEMENTATION_SUMMARY.md  # Implementation overview
 │   ├── TEXTURE_FORMAT_VERIFIED.md  # Texture format analysis
 │   └── LEVEL_FORMAT_INVESTIGATION.md  # Level/scene format research
 ├── Makefile
@@ -270,18 +276,35 @@ evrFileTools/
 ## Development
 
 ```bash
-# Build
+# Build all CLI tools
 make build
 
-# Run tests
+# Run all tests
 make test
 
-# Run benchmarks
+# Run benchmarks (single pass)
 make bench
 
-# Format and lint
+# Compare benchmarks (5 iterations)
+make bench-compare
+
+# Format and lint code
+make fmt
+make lint
 make check
+
+# Install locally
+make install
 ```
+
+### Project Statistics
+
+- **~4,580 lines** of Go code
+- **8 packages** with clear separation of concerns
+- **3 CLI tools** for different tasks
+- **1 external dependency** (DataDog/zstd)
+- **8 test files** with unit and benchmark tests
+- **Multi-platform support** via Go cross-compilation
 
 ## Documentation
 
@@ -293,6 +316,7 @@ make check
   - Asset References
   - Tints
   - Packages and Manifests
+- **[IMPLEMENTATION_SUMMARY.md](docs/IMPLEMENTATION_SUMMARY.md)** - Overview of project implementation and design decisions
 - **[TEXTURE_FORMAT_VERIFIED.md](docs/TEXTURE_FORMAT_VERIFIED.md)** - Detailed texture format analysis and verification
 - **[LEVEL_FORMAT_INVESTIGATION.md](docs/LEVEL_FORMAT_INVESTIGATION.md)** - Level/scene format research (preliminary)
 
