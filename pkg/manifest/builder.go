@@ -6,6 +6,7 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/DataDog/zstd"
 )
@@ -91,24 +92,29 @@ func (b *Builder) Build(fileGroups [][]ScannedFile) (*Manifest, error) {
 		}
 
 		for _, file := range group {
-			data, err := os.ReadFile(file.Path)
-			if err != nil {
-				return nil, fmt.Errorf("read file %s: %w", file.Path, err)
+			var data []byte
+			var err error
+
+			if file.Path != "" {
+				data, err = os.ReadFile(file.Path)
+			} else if file.SrcPackage != nil && file.SrcContent != nil {
+				data, err = file.SrcPackage.ReadContent(file.SrcContent)
+				if err != nil && strings.Contains(err.Error(), "too short") {
+					fmt.Printf("Warning: skipping corrupted file %x/%x: %v\n", file.TypeSymbol, file.FileSymbol, err)
+					data = []byte{}
+					err = nil
+				}
+			} else {
+				err = fmt.Errorf("no source for file %x/%x", file.TypeSymbol, file.FileSymbol)
 			}
 
-			manifest.FrameContents = append(manifest.FrameContents, FrameContent{
-				TypeSymbol: file.TypeSymbol,
-				FileSymbol: file.FileSymbol,
-				FrameIndex: frameIndex,
-				DataOffset: currentOffset,
-				Size:       uint32(len(data)),
-				Alignment:  1,
-			})
+			if err != nil {
+				return nil, fmt.Errorf("read file %x/%x: %w", file.TypeSymbol, file.FileSymbol, err)
+			}
 
-			manifest.Metadata = append(manifest.Metadata, FileMetadata{
-				TypeSymbol: file.TypeSymbol,
-				FileSymbol: file.FileSymbol,
-			})
+			if !file.SkipManifest {
+				b.addFileToManifest(manifest, file, frameIndex, currentOffset)
+			}
 
 			currentFrame.Write(data)
 			currentOffset += uint32(len(data))
@@ -131,12 +137,33 @@ func (b *Builder) Build(fileGroups [][]ScannedFile) (*Manifest, error) {
 	return manifest, nil
 }
 
+func (b *Builder) addFileToManifest(manifest *Manifest, file ScannedFile, frameIndex, offset uint32) {
+	alignment := uint32(1)
+
+	manifest.FrameContents = append(manifest.FrameContents, FrameContent{
+		TypeSymbol: file.TypeSymbol,
+		FileSymbol: file.FileSymbol,
+		FrameIndex: frameIndex,
+		DataOffset: offset,
+		Size:       file.Size,
+		Alignment:  alignment,
+	})
+
+	manifest.Metadata = append(manifest.Metadata, FileMetadata{
+		TypeSymbol: file.TypeSymbol,
+		FileSymbol: file.FileSymbol,
+	})
+}
+
 func (b *Builder) writeFrame(manifest *Manifest, data *bytes.Buffer, index uint32) error {
 	compressed, err := zstd.CompressLevel(nil, data.Bytes(), b.compressionLevel)
 	if err != nil {
 		return fmt.Errorf("compress frame %d: %w", index, err)
 	}
+	return b.writeCompressedFrame(manifest, compressed, uint32(data.Len()))
+}
 
+func (b *Builder) writeCompressedFrame(manifest *Manifest, compressed []byte, uncompressedSize uint32) error {
 	packageIndex := manifest.Header.PackageCount - 1
 	packagePath := filepath.Join(b.outputDir, "packages", fmt.Sprintf("%s_%d", b.packageName, packageIndex))
 
@@ -162,14 +189,14 @@ func (b *Builder) writeFrame(manifest *Manifest, data *bytes.Buffer, index uint3
 	defer f.Close()
 
 	if _, err := f.Write(compressed); err != nil {
-		return fmt.Errorf("write frame %d: %w", index, err)
+		return fmt.Errorf("write compressed data: %w", err)
 	}
 
 	manifest.Frames = append(manifest.Frames, Frame{
 		PackageIndex:   packageIndex,
 		Offset:         offset,
 		CompressedSize: uint32(len(compressed)),
-		Length:         uint32(data.Len()),
+		Length:         uncompressedSize,
 	})
 
 	b.incrementSection(&manifest.Header.Frames, 1)

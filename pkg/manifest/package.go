@@ -14,6 +14,10 @@ import (
 type Package struct {
 	manifest *Manifest
 	files    []packageFile
+
+	// Decompression cache
+	lastFrameIdx  uint32
+	lastFrameData []byte
 }
 
 type packageFile interface {
@@ -31,8 +35,9 @@ func OpenPackage(manifest *Manifest, basePath string) (*Package, error) {
 	count := manifest.PackageCount()
 
 	pkg := &Package{
-		manifest: manifest,
-		files:    make([]packageFile, count),
+		manifest:     manifest,
+		files:        make([]packageFile, count),
+		lastFrameIdx: ^uint32(0), // Invalid index
 	}
 
 	for i := range count {
@@ -58,12 +63,91 @@ func (p *Package) Close() error {
 			}
 		}
 	}
+	p.lastFrameData = nil
 	return lastErr
 }
 
 // Manifest returns the associated manifest.
 func (p *Package) Manifest() *Manifest {
 	return p.manifest
+}
+
+// ReadContent reads the data for a specific file content.
+func (p *Package) ReadContent(fc *FrameContent) ([]byte, error) {
+	// Check cache
+	if p.lastFrameData != nil && p.lastFrameIdx == fc.FrameIndex {
+		if uint32(len(p.lastFrameData)) < fc.DataOffset+fc.Size {
+			return nil, fmt.Errorf("frame data too short for content")
+		}
+		return p.lastFrameData[fc.DataOffset : fc.DataOffset+fc.Size], nil
+	}
+
+	// Load frame
+	if int(fc.FrameIndex) >= len(p.manifest.Frames) {
+		return nil, fmt.Errorf("invalid frame index %d", fc.FrameIndex)
+	}
+	frame := p.manifest.Frames[fc.FrameIndex]
+
+	if frame.Length == 0 {
+		return nil, nil
+	}
+
+	// Read compressed data
+	if int(frame.PackageIndex) >= len(p.files) {
+		return nil, fmt.Errorf("invalid package index %d", frame.PackageIndex)
+	}
+	file := p.files[frame.PackageIndex]
+	if _, err := file.Seek(int64(frame.Offset), io.SeekStart); err != nil {
+		return nil, fmt.Errorf("seek frame %d: %w", fc.FrameIndex, err)
+	}
+
+	compressed := make([]byte, frame.CompressedSize)
+	if _, err := io.ReadFull(file, compressed); err != nil {
+		return nil, fmt.Errorf("read frame %d: %w", fc.FrameIndex, err)
+	}
+
+	// Decompress
+	decompressed, err := zstd.Decompress(nil, compressed)
+	if err != nil {
+		return nil, fmt.Errorf("decompress frame %d: %w", fc.FrameIndex, err)
+	}
+
+	// Update cache
+	p.lastFrameIdx = fc.FrameIndex
+	p.lastFrameData = decompressed
+
+	if uint32(len(decompressed)) < fc.DataOffset+fc.Size {
+		return nil, fmt.Errorf("decompressed frame too short")
+	}
+
+	return decompressed[fc.DataOffset : fc.DataOffset+fc.Size], nil
+}
+
+// ReadRawFrame reads the raw compressed data for a specific frame.
+func (p *Package) ReadRawFrame(frameIndex uint32) ([]byte, error) {
+	if int(frameIndex) >= len(p.manifest.Frames) {
+		return nil, fmt.Errorf("invalid frame index %d", frameIndex)
+	}
+	frame := p.manifest.Frames[frameIndex]
+
+	if frame.Length == 0 {
+		return nil, nil
+	}
+
+	if int(frame.PackageIndex) >= len(p.files) {
+		return nil, fmt.Errorf("invalid package index %d", frame.PackageIndex)
+	}
+	file := p.files[frame.PackageIndex]
+	if _, err := file.Seek(int64(frame.Offset), io.SeekStart); err != nil {
+		return nil, fmt.Errorf("seek frame %d: %w", frameIndex, err)
+	}
+
+	compressed := make([]byte, frame.CompressedSize)
+	if _, err := io.ReadFull(file, compressed); err != nil {
+		return nil, fmt.Errorf("read frame %d: %w", frameIndex, err)
+	}
+
+	return compressed, nil
 }
 
 // Extract extracts all files from the package to the output directory.
@@ -117,6 +201,10 @@ func (p *Package) Extract(outputDir string, opts ...ExtractOption) error {
 		// Extract files from this frame using pre-built index
 		contents := frameIndex[uint32(frameIdx)]
 		for _, fc := range contents {
+			if len(cfg.allowedTypes) > 0 && !cfg.allowedTypes[fc.TypeSymbol] {
+				continue
+			}
+
 			var fileName string
 			if cfg.decimalNames {
 				fileName = strconv.FormatInt(fc.FileSymbol, 10)
@@ -154,6 +242,7 @@ func (p *Package) Extract(outputDir string, opts ...ExtractOption) error {
 type extractConfig struct {
 	preserveGroups bool
 	decimalNames   bool
+	allowedTypes   map[int64]bool
 }
 
 // ExtractOption configures extraction behavior.
@@ -170,5 +259,17 @@ func WithPreserveGroups(preserve bool) ExtractOption {
 func WithDecimalNames(decimal bool) ExtractOption {
 	return func(c *extractConfig) {
 		c.decimalNames = decimal
+	}
+}
+
+// WithTypeFilter configures extraction to only include specific file types.
+func WithTypeFilter(types []int64) ExtractOption {
+	return func(c *extractConfig) {
+		if len(types) > 0 {
+			c.allowedTypes = make(map[int64]bool, len(types))
+			for _, t := range types {
+				c.allowedTypes[t] = true
+			}
+		}
 	}
 }
