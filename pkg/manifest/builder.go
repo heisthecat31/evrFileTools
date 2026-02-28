@@ -17,6 +17,11 @@ const (
 
 	// MaxPackageSize is the maximum size of a single package file.
 	MaxPackageSize = math.MaxInt32
+
+	// MaxFrameSize is the maximum size of a single uncompressed frame.
+	// This prevents frames from becoming too large when grouping files,
+	// which can cause memory issues or overflows during decompression.
+	MaxFrameSize = 1 * 1024 * 1024
 )
 
 // Builder constructs packages and manifests from a set of files.
@@ -112,6 +117,17 @@ func (b *Builder) Build(fileGroups [][]ScannedFile) (*Manifest, error) {
 				return nil, fmt.Errorf("read file %x/%x: %w", file.TypeSymbol, file.FileSymbol, err)
 			}
 
+			// Check if adding this file would exceed max frame size
+			// We only split if the frame is not empty to ensure we don't loop infinitely on large files
+			if currentFrame.Len() > 0 && currentFrame.Len()+len(data) > MaxFrameSize {
+				if err := b.writeFrame(manifest, &currentFrame, frameIndex); err != nil {
+					return nil, err
+				}
+				frameIndex++
+				currentFrame.Reset()
+				currentOffset = 0
+			}
+
 			if !file.SkipManifest {
 				b.addFileToManifest(manifest, file, frameIndex, currentOffset)
 			}
@@ -168,14 +184,14 @@ func (b *Builder) writeCompressedFrame(manifest *Manifest, compressed []byte, un
 	packagePath := filepath.Join(b.outputDir, "packages", fmt.Sprintf("%s_%d", b.packageName, packageIndex))
 
 	// Check if we need a new package file
+	// We use os.Stat to get the actual file size to ensure the manifest offset is correct
 	var offset uint32
-	if len(manifest.Frames) > 0 {
-		lastFrame := manifest.Frames[len(manifest.Frames)-1]
-		offset = lastFrame.Offset + lastFrame.CompressedSize
+	if info, err := os.Stat(packagePath); err == nil {
+		offset = uint32(info.Size())
 	}
 
 	maxSize := int64(MaxPackageSize)
-	if int64(offset) >= maxSize || int64(offset)+int64(len(compressed)) > maxSize {
+	if int64(offset)+int64(len(compressed)) > maxSize {
 		manifest.Header.PackageCount++
 		packageIndex++
 		packagePath = filepath.Join(b.outputDir, "packages", fmt.Sprintf("%s_%d", b.packageName, packageIndex))
