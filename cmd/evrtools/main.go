@@ -22,6 +22,7 @@ var (
 	forceOverwrite bool
 	useDecimalName bool
 	exportTypes    string
+	quickMode      bool
 )
 
 func init() {
@@ -34,6 +35,7 @@ func init() {
 	flag.BoolVar(&forceOverwrite, "force", false, "Allow non-empty output directory")
 	flag.BoolVar(&useDecimalName, "decimal-names", false, "Use decimal format for filenames (default is hex)")
 	flag.StringVar(&exportTypes, "export", "", "Comma-separated list of types to export (textures, tints)")
+	flag.BoolVar(&quickMode, "quick", false, "Quick swap mode (modifies game files in-place)")
 }
 
 func main() {
@@ -187,6 +189,13 @@ func runBuild() error {
 	if dataDir != "" {
 		manifestPath := filepath.Join(dataDir, "manifests", packageName)
 		if _, err := os.Stat(manifestPath); err == nil {
+			if quickMode {
+				m, err := manifest.ReadFile(manifestPath)
+				if err != nil {
+					return fmt.Errorf("read manifest: %w", err)
+				}
+				return manifest.QuickRepack(m, files, dataDir, packageName)
+			}
 			return runRepack(files)
 		}
 	}
