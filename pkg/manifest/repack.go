@@ -580,9 +580,26 @@ func QuickRepack(manifest *Manifest, fileMap [][]ScannedFile, dataDir, packageNa
 		}
 	}
 
-	minSafePackageIndex := manifest.Header.PackageCount
+	// 2. Find original package sizes from terminator frames and truncate
+	// packages back to their original sizes (removes data from previous QuickRepack runs).
+	originalPkgSizes := make(map[uint32]int64)
+	for _, f := range manifest.Frames {
+		if f.CompressedSize == 0 && f.Length == 0 && f.Offset > 0 {
+			originalPkgSizes[f.PackageIndex] = int64(f.Offset)
+		}
+	}
 
-	// 2. Open Package
+	for pkgIdx, origSize := range originalPkgSizes {
+		pkgFilePath := filepath.Join(dataDir, "packages", fmt.Sprintf("%s_%d", packageName, pkgIdx))
+		if info, err := os.Stat(pkgFilePath); err == nil && info.Size() > origSize {
+			fmt.Printf("Truncating package %d to original size %d (was %d)\n", pkgIdx, origSize, info.Size())
+			if err := os.Truncate(pkgFilePath, origSize); err != nil {
+				return fmt.Errorf("truncate package %d: %w", pkgIdx, err)
+			}
+		}
+	}
+
+	// 3. Open Package
 	pkgPath := filepath.Join(dataDir, "packages", packageName)
 	srcPkg, err := OpenPackage(manifest, pkgPath)
 	if err != nil {
@@ -690,6 +707,9 @@ func QuickRepack(manifest *Manifest, fileMap [][]ScannedFile, dataDir, packageNa
 		}
 	}
 
+	// Mark all original packages as already created (don't truncate them on open).
+	// New frames go into new package files to avoid modifying originals.
+	minSafePackageIndex := manifest.Header.PackageCount
 	createdMap := make(map[uint32]bool)
 	for i := uint32(0); i < manifest.Header.PackageCount; i++ {
 		createdMap[i] = true
@@ -877,39 +897,6 @@ func QuickRepack(manifest *Manifest, fileMap [][]ScannedFile, dataDir, packageNa
 	}
 
 	writer.close()
-
-	// Re-add terminators for all packages at their current positions
-	for i := uint32(0); i < manifest.Header.PackageCount; i++ {
-		path := filepath.Join(dataDir, "packages", fmt.Sprintf("%s_%d", packageName, i))
-		stats, err := os.Stat(path)
-		if err != nil {
-			continue
-		}
-		// The RAD engine expects the terminator frame Offset to be exactly at the file end.
-		// Align the file end to 1 byte first for consistency if we modified this package.
-		if stats.Size()%1 != 0 {
-			f, err := os.OpenFile(path, os.O_RDWR, 0644)
-			if err == nil {
-				size, _ := f.Seek(0, io.SeekEnd)
-				if size%1 != 0 {
-					padding := 1 - (size % 1)
-					f.Write(make([]byte, int(padding)))
-				}
-				f.Close()
-				stats, _ = os.Stat(path) // Re-stat for new size
-			}
-		}
-
-		manifest.Frames = append(manifest.Frames, Frame{
-			PackageIndex: i,
-			Offset:       uint32(stats.Size()),
-		})
-		incrementSection(&manifest.Header.Frames, 1)
-	}
-
-	// Final null frame
-	manifest.Frames = append(manifest.Frames, Frame{})
-	incrementSection(&manifest.Header.Frames, 1)
 
 	fmt.Printf("Updating manifest: %s\n", manifestPath)
 	return WriteFile(manifestPath, manifest)
