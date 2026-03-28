@@ -788,10 +788,10 @@ func QuickRepack(manifest *Manifest, fileMap [][]ScannedFile, dataDir, packageNa
 				})
 
 				for j := 0; j < len(sorted); j++ {
-					align := sorted[j].fc.Alignment
-					if align == 0 {
-						align = 1
-					}
+					// Original game engine completely ignores the FrameContent.Alignment 
+					// property when packing frames (tightly packs all files with 0 padding).
+					align := uint32(1)
+
 					padding := (align - (uint32(constructionBuf.Len()) % align)) % align
 					if padding > 0 {
 						constructionBuf.Write(make([]byte, padding))
@@ -857,10 +857,9 @@ func QuickRepack(manifest *Manifest, fileMap [][]ScannedFile, dataDir, packageNa
 		for j := 0; j < len(sorted); j++ {
 			fc := &manifest.FrameContents[sorted[j].index]
 
-			align := fc.Alignment
-			if align == 0 {
-				align = 1
-			}
+			// Original game tightly packs frames unconditionally, ignoring fc.Alignment.
+			align := uint32(1)
+
 			padding := (align - (currentOffset % align)) % align
 			currentOffset += padding
 
@@ -876,7 +875,8 @@ func QuickRepack(manifest *Manifest, fileMap [][]ScannedFile, dataDir, packageNa
 			fc.FrameIndex = uint32(newFrameIndex)
 			fc.DataOffset = currentOffset
 			fc.Size = size
-			fc.Alignment = align
+			// Retain original alignment metadata for memory allocation
+			fc.Alignment = sorted[j].fc.Alignment
 
 			currentOffset += size
 		}
