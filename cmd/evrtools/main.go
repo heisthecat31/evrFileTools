@@ -34,8 +34,8 @@ func init() {
 	flag.BoolVar(&preserveGroups, "preserve-groups", false, "Preserve frame grouping in output")
 	flag.BoolVar(&forceOverwrite, "force", false, "Allow non-empty output directory")
 	flag.BoolVar(&useDecimalName, "decimal-names", false, "Use decimal format for filenames (default is hex)")
-	flag.StringVar(&exportTypes, "export", "", "Comma-separated list of types to export (textures, tints)")
-	flag.BoolVar(&quickMode, "quick", false, "Quick swap mode (modifies game files in-place)")
+	flag.StringVar(&exportTypes, "export", "", "Comma-separated list of types to export (textures, tints, audio)")
+	flag.BoolVar(&quickMode, "quick", false, "Quick swap mode (appends new package files, updates manifest in-place)")
 }
 
 func main() {
@@ -159,6 +159,10 @@ func runExtract() error {
 				filterTypes = append(filterTypes,
 					int64(uint64(0x24CBFD54E9A7F2EA)), // Folder: 24cbfd54e9a7f2ea
 					int64(uint64(0x32f30fe361939dee)), // 3671295590506143214
+				)
+			case "audio":
+				filterTypes = append(filterTypes,
+					int64(uint64(0x6d358eef7bb85a98)), // Audio folder
 				)
 			}
 		}

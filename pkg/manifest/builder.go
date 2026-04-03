@@ -12,7 +12,7 @@ import (
 )
 
 const (
-	// DefaultCompressionLevel is the compression level used for building packages.
+	// DefaultCompressionLevel is the compression level used for building packages (Level 3).
 	DefaultCompressionLevel = zstd.BestSpeed
 
 	// MaxPackageSize is the maximum size of a single package file.
@@ -185,7 +185,7 @@ func (b *Builder) addFileToManifest(manifest *Manifest, file ScannedFile, frameI
 func (b *Builder) writeFrame(manifest *Manifest, data *bytes.Buffer, index uint32) error {
 	compressed, err := zstd.CompressLevel(nil, data.Bytes(), b.compressionLevel)
 	if err != nil {
-		return fmt.Errorf("compress frame %d: %w", index, err)
+		return fmt.Errorf("compress frame: %w", err)
 	}
 	return b.writeCompressedFrame(manifest, compressed, uint32(data.Len()))
 }

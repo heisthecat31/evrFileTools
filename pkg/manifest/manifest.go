@@ -247,14 +247,14 @@ func encodeSection(s *Section, buf []byte) {
 }
 
 // ReadFile reads and parses a manifest from a file.
+// Uses os.ReadFile + bulk decompression for speed (streaming hangs on large manifests).
 func ReadFile(path string) (*Manifest, error) {
-	f, err := os.Open(path)
+	raw, err := os.ReadFile(path)
 	if err != nil {
 		return nil, fmt.Errorf("open manifest: %w", err)
 	}
-	defer f.Close()
 
-	data, err := archive.ReadAll(f)
+	data, err := archive.DecodeRaw(raw)
 	if err != nil {
 		return nil, fmt.Errorf("read archive: %w", err)
 	}
@@ -266,6 +266,7 @@ func ReadFile(path string) (*Manifest, error) {
 
 	return manifest, nil
 }
+
 
 // WriteFile writes a manifest to a file.
 func WriteFile(path string, m *Manifest) error {

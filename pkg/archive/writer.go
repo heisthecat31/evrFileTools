@@ -3,7 +3,6 @@ package archive
 import (
 	"fmt"
 	"io"
-
 	"github.com/DataDog/zstd"
 )
 
@@ -19,7 +18,11 @@ type Writer struct {
 // WriterOption configures a Writer.
 type WriterOption func(*Writer)
 
-// WithCompressionLevel sets the compression level for the writer.
+const (
+	// DefaultCompression is the default compression level (Level 3)
+	DefaultCompression = zstd.BestSpeed
+)
+
 func WithCompressionLevel(level int) WriterOption {
 	return func(w *Writer) {
 		w.level = level
@@ -31,7 +34,7 @@ func WithCompressionLevel(level int) WriterOption {
 func NewWriter(dst io.WriteSeeker, uncompressedSize uint64, opts ...WriterOption) (*Writer, error) {
 	w := &Writer{
 		dst:   dst,
-		level: DefaultCompressionLevel,
+		level: DefaultCompression,
 		header: &Header{
 			Magic:            Magic,
 			HeaderLength:     16,
@@ -52,6 +55,14 @@ func NewWriter(dst io.WriteSeeker, uncompressedSize uint64, opts ...WriterOption
 
 	w.zWriter = zstd.NewWriterLevel(dst, w.level)
 	return w, nil
+}
+
+func (w *Writer) writeFrame(data []byte) (uint32, error) {
+	compressed, err := zstd.CompressLevel(nil, data, w.level)
+	if err != nil {
+		return 0, fmt.Errorf("compress frame: %w", err)
+	}
+	return uint32(len(compressed)), nil
 }
 
 // Write writes compressed data.

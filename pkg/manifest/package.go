@@ -8,7 +8,6 @@ import (
 	"runtime"
 	"strconv"
 	"sync"
-
 	"github.com/DataDog/zstd"
 )
 
@@ -184,8 +183,7 @@ func (p *Package) Extract(outputDir string, opts ...ExtractOption) error {
 		go func() {
 			defer wg.Done()
 
-			// Thread-local buffers and context
-			ctx := zstd.NewCtx()
+			// Thread-local buffers
 			var compressed []byte
 			var decompressed []byte
 
@@ -216,7 +214,7 @@ func (p *Package) Extract(outputDir string, opts ...ExtractOption) error {
 
 				// Decompress
 				var err error
-				decompressed, err = ctx.Decompress(decompressed[:0], compressed)
+				decompressed, err = zstd.Decompress(decompressed[:0], compressed)
 				if err != nil {
 					select {
 					case errs <- fmt.Errorf("decompress frame %d: %w", frameIdx, err):

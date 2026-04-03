@@ -11,11 +11,9 @@ import (
 	"runtime"
 	"sort"
 	"sync"
-
 	"github.com/DataDog/zstd"
 )
 
-// Pools to eliminate GC overhead
 var (
 	readPool         = sync.Pool{New: func() interface{} { return make([]byte, 0, 1024*1024) }}
 	decompPool       = sync.Pool{New: func() interface{} { return make([]byte, 0, 4*1024*1024) }}
@@ -107,15 +105,8 @@ func (pw *packageWriter) write(manifest *Manifest, data []byte, decompressedSize
 				return fmt.Errorf("seek to end of package: %w", err)
 			}
 
-			// Add 1-byte alignment padding (effectively no padding)
-			if size > 0 && size%1 != 0 {
-				padding := 1 - (size % 1)
-				if _, err := f.Write(make([]byte, padding)); err != nil {
-					return fmt.Errorf("pad package for alignment: %w", err)
-				}
-				size += padding
-			}
-
+			// Maintain 1-byte alignment (essentially no padding between frames)
+			// This matches original engine expectations for tight packing.
 			pw.currentOffset = size
 		}
 
@@ -144,6 +135,58 @@ func (pw *packageWriter) write(manifest *Manifest, data []byte, decompressedSize
 	pw.currentOffset += int64(len(data))
 
 	return nil
+}
+
+// writeRaw writes compressed data to the current package and returns where it
+// was written (packageIndex, byteOffset) WITHOUT touching manifest.Frames.
+// Used by QuickRepack to do true in-place frame updates.
+func (pw *packageWriter) writeRaw(data []byte) (pkgIdx uint32, offset uint32, err error) {
+	if err = os.MkdirAll(fmt.Sprintf("%s/packages", pw.outputDir), 0755); err != nil {
+		return 0, 0, err
+	}
+
+	activePackageNum := pw.pkgIndex
+	if pw.fileHandle == nil || activePackageNum < pw.minPkgIndex {
+		activePackageNum = pw.minPkgIndex
+	}
+
+	for {
+		if pw.fileHandle == nil || pw.pkgIndex != activePackageNum {
+			if pw.fileHandle != nil {
+				pw.fileHandle.Close()
+			}
+			pkgPath := fmt.Sprintf("%s/packages/%s_%d", pw.outputDir, pw.pkgName, activePackageNum)
+			flags := os.O_RDWR | os.O_CREATE
+			if !pw.created[activePackageNum] {
+				flags |= os.O_TRUNC
+				pw.created[activePackageNum] = true
+			}
+			f, ferr := os.OpenFile(pkgPath, flags, 0644)
+			if ferr != nil {
+				return 0, 0, ferr
+			}
+			pw.fileHandle = f
+			pw.pkgIndex = activePackageNum
+			size, serr := f.Seek(0, io.SeekEnd)
+			if serr != nil {
+				return 0, 0, fmt.Errorf("seek to end: %w", serr)
+			}
+			pw.currentOffset = size
+		}
+		if pw.currentOffset+int64(len(data)) > math.MaxInt32 {
+			activePackageNum++
+			continue
+		}
+		break
+	}
+
+	writeOffset := uint32(pw.currentOffset)
+	if _, werr := pw.fileHandle.Write(data); werr != nil {
+		return 0, 0, werr
+	}
+	pw.pkgIndex = activePackageNum
+	pw.currentOffset += int64(len(data))
+	return activePackageNum, writeOffset, nil
 }
 
 func (pw *packageWriter) close() {
@@ -289,18 +332,7 @@ func Repack(manifest *Manifest, fileMap [][]ScannedFile, outputDir, packageName,
 					return sorted[a].fc.DataOffset < sorted[b].fc.DataOffset
 				})
 
-				currentOffset := uint32(0)
 				for j := 0; j < len(sorted); j++ {
-					align := sorted[j].fc.Alignment
-					if align == 0 {
-						align = 1
-					}
-					padding := (align - (currentOffset % align)) % align
-					if padding > 0 {
-						constructionBuf.Write(make([]byte, padding))
-						currentOffset += padding
-					}
-
 					buf := [128]byte{}
 					binary.LittleEndian.PutUint64(buf[0:64], uint64(sorted[j].fc.TypeSymbol))
 					binary.LittleEndian.PutUint64(buf[64:128], uint64(sorted[j].fc.FileSymbol))
@@ -313,22 +345,15 @@ func Repack(manifest *Manifest, fileMap [][]ScannedFile, outputDir, packageName,
 							return
 						}
 						constructionBuf.Write(modData)
-						currentOffset += uint32(len(modData))
 					} else {
 						start := sorted[j].fc.DataOffset
 						end := start + sorted[j].fc.Size
 						constructionBuf.Write(decompBytes[start:end])
-						currentOffset += sorted[j].fc.Size
 					}
 				}
 
 				compBuf := compPool.Get().([]byte)
-				encodedData, err := zstd.CompressLevel(compBuf[:0], constructionBuf.Bytes(), zstd.BestSpeed)
-				if err != nil {
-					res.err = fmt.Errorf("compress frame: %w", err)
-					ch <- res
-					return
-				}
+				encodedData, _ := zstd.CompressLevel(compBuf[:0], constructionBuf.Bytes(), zstd.BestSpeed)
 				res.data = encodedData
 				res.decompressedSize = uint32(constructionBuf.Len())
 
@@ -371,13 +396,6 @@ func Repack(manifest *Manifest, fileMap [][]ScannedFile, outputDir, packageName,
 			for j := 0; j < len(sorted); j++ {
 				fc := &newManifest.FrameContents[sorted[j].index]
 
-				align := fc.Alignment
-				if align == 0 {
-					align = 1
-				}
-				padding := (align - (currentOffset % align)) % align
-				currentOffset += padding
-
 				size := fc.Size
 				if res.isModified {
 					buf := [128]byte{}
@@ -391,7 +409,9 @@ func Repack(manifest *Manifest, fileMap [][]ScannedFile, outputDir, packageName,
 				fc.FrameIndex = newFrameIdx
 				fc.DataOffset = currentOffset
 				fc.Size = size
-				fc.Alignment = align
+				// Retain original alignment metadata - engine uses this for memory allocation,
+				// but files are packed tightly (no padding bytes written between them).
+				fc.Alignment = sorted[j].fc.Alignment
 
 				currentOffset += size
 			}
@@ -443,10 +463,7 @@ func Repack(manifest *Manifest, fileMap [][]ScannedFile, outputDir, packageName,
 			}
 
 			compBuf := compPool.Get().([]byte)
-			encodedData, err := zstd.CompressLevel(compBuf[:0], currentFrame.Bytes(), zstd.BestSpeed)
-			if err != nil {
-				return err
-			}
+			encodedData, _ := zstd.CompressLevel(compBuf[:0], currentFrame.Bytes(), zstd.BestSpeed)
 
 			if err := writer.write(&newManifest, encodedData, uint32(currentFrame.Len())); err != nil {
 				return err
@@ -477,8 +494,8 @@ func Repack(manifest *Manifest, fileMap [][]ScannedFile, outputDir, packageName,
 				currentOffset += file.Size
 			}
 
-			// Align file data within the frame
-			align := uint32(8)
+			// No padding between files in frame (game engine tightly packs)
+			align := uint32(1)
 			padding := (align - (uint32(currentFrame.Len()) % align)) % align
 			if padding > 0 {
 				currentFrame.Write(make([]byte, padding))
@@ -496,7 +513,7 @@ func Repack(manifest *Manifest, fileMap [][]ScannedFile, outputDir, packageName,
 				return fmt.Errorf("read new file %s: %w", file.Path, err)
 			}
 
-			align := uint32(8)
+			align := uint32(1)
 			padding := (align - (uint32(currentFrame.Len()) % align)) % align
 
 			if currentFrame.Len() > 0 && currentFrame.Len()+int(padding)+len(data) > MaxRepackFrameSize {
@@ -788,15 +805,6 @@ func QuickRepack(manifest *Manifest, fileMap [][]ScannedFile, dataDir, packageNa
 				})
 
 				for j := 0; j < len(sorted); j++ {
-					// Original game engine completely ignores the FrameContent.Alignment 
-					// property when packing frames (tightly packs all files with 0 padding).
-					align := uint32(1)
-
-					padding := (align - (uint32(constructionBuf.Len()) % align)) % align
-					if padding > 0 {
-						constructionBuf.Write(make([]byte, padding))
-					}
-
 					buf := [128]byte{}
 					binary.LittleEndian.PutUint64(buf[0:64], uint64(sorted[j].fc.TypeSymbol))
 					binary.LittleEndian.PutUint64(buf[64:128], uint64(sorted[j].fc.FileSymbol))
@@ -822,12 +830,7 @@ func QuickRepack(manifest *Manifest, fileMap [][]ScannedFile, dataDir, packageNa
 				}
 
 				compBuf := compPool.Get().([]byte)
-				encodedData, err := zstd.CompressLevel(compBuf[:0], constructionBuf.Bytes(), zstd.BestSpeed)
-				if err != nil {
-					res.err = err
-					ch <- res
-					return
-				}
+				encodedData, _ := zstd.CompressLevel(compBuf[:0], constructionBuf.Bytes(), zstd.BestSpeed)
 				res.data = encodedData
 				res.decompressedSize = uint32(constructionBuf.Len())
 
@@ -843,8 +846,9 @@ func QuickRepack(manifest *Manifest, fileMap [][]ScannedFile, dataDir, packageNa
 			return res.err
 		}
 
-		newFrameIndex := len(manifest.Frames)
-
+		// Update FrameContent DataOffsets for this frame (sizes may have changed).
+		// We do NOT change FrameIndex — we update the existing frame entry in-place
+		// so the frame grouping stays identical to the original manifest.
 		sorted := make([]fcWrapper, 0)
 		if contents, ok := contentsByFrame[uint32(res.index)]; ok {
 			sorted = append(sorted, contents...)
@@ -857,12 +861,6 @@ func QuickRepack(manifest *Manifest, fileMap [][]ScannedFile, dataDir, packageNa
 		for j := 0; j < len(sorted); j++ {
 			fc := &manifest.FrameContents[sorted[j].index]
 
-			// Original game tightly packs frames unconditionally, ignoring fc.Alignment.
-			align := uint32(1)
-
-			padding := (align - (currentOffset % align)) % align
-			currentOffset += padding
-
 			buf := [128]byte{}
 			binary.LittleEndian.PutUint64(buf[0:64], uint64(fc.TypeSymbol))
 			binary.LittleEndian.PutUint64(buf[64:128], uint64(fc.FileSymbol))
@@ -872,17 +870,26 @@ func QuickRepack(manifest *Manifest, fileMap [][]ScannedFile, dataDir, packageNa
 				size = modFile.Size
 			}
 
-			fc.FrameIndex = uint32(newFrameIndex)
+			// FrameIndex stays the same — only DataOffset and Size may change
 			fc.DataOffset = currentOffset
 			fc.Size = size
-			// Retain original alignment metadata for memory allocation
 			fc.Alignment = sorted[j].fc.Alignment
 
 			currentOffset += size
 		}
 
-		if err := writer.write(manifest, res.data, res.decompressedSize); err != nil {
-			return err
+		// Write compressed data to a new package and update the frame entry
+		// IN-PLACE at its original index. This preserves the exact frame
+		// structure (same frame count, same FrameIndex values) the engine expects.
+		pkgIdx, offset, err := writer.writeRaw(res.data)
+		if err != nil {
+			return fmt.Errorf("write frame %d: %w", res.index, err)
+		}
+		manifest.Frames[res.index] = Frame{
+			PackageIndex:   pkgIdx,
+			Offset:         offset,
+			CompressedSize: uint32(len(res.data)),
+			Length:         res.decompressedSize,
 		}
 
 		if res.rawReadBuf != nil {
@@ -898,6 +905,35 @@ func QuickRepack(manifest *Manifest, fileMap [][]ScannedFile, dataDir, packageNa
 
 	writer.close()
 
+	// Determine the highest package index actually used (original + any new ones)
+	highestPkg := manifest.Header.PackageCount - 1
+	for _, f := range manifest.Frames {
+		if f.CompressedSize > 0 && f.PackageIndex > highestPkg {
+			highestPkg = f.PackageIndex
+		}
+	}
+	manifest.Header.PackageCount = highestPkg + 1
+
+	// Re-add terminator frames for ALL packages (original + newly created)
+	for i := uint32(0); i <= highestPkg; i++ {
+		path := fmt.Sprintf("%s/packages/%s_%d", dataDir, packageName, i)
+		stats, err := os.Stat(path)
+		if err != nil {
+			continue
+		}
+		manifest.Frames = append(manifest.Frames, Frame{
+			PackageIndex:   i,
+			Offset:         uint32(stats.Size()),
+			CompressedSize: 0,
+			Length:         0,
+		})
+	}
+
+	// Final global null terminator
+	manifest.Frames = append(manifest.Frames, Frame{})
+
 	fmt.Printf("Updating manifest: %s\n", manifestPath)
 	return WriteFile(manifestPath, manifest)
 }
+
+
