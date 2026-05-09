@@ -267,7 +267,6 @@ func ReadFile(path string) (*Manifest, error) {
 	return manifest, nil
 }
 
-
 // WriteFile writes a manifest to a file.
 func WriteFile(path string, m *Manifest) error {
 	// Synchronize header counts with actual slice lengths to prevent size discrepancies

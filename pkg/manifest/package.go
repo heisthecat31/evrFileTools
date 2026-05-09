@@ -231,8 +231,24 @@ func (p *Package) Extract(outputDir string, opts ...ExtractOption) error {
 				// Extract files from this frame
 				contents := frameIndex[uint32(frameIdx)]
 				for _, fc := range contents {
-					if len(cfg.allowedTypes) > 0 && !cfg.allowedTypes[fc.TypeSymbol] {
-						continue
+					var basePath string
+					if cfg.typeMapping != nil {
+						relPath, ok := cfg.typeMapping[fc.TypeSymbol]
+						if !ok {
+							continue
+						}
+						basePath = filepath.Join(outputDir, relPath)
+					} else {
+						if len(cfg.allowedTypes) > 0 && !cfg.allowedTypes[fc.TypeSymbol] {
+							continue
+						}
+
+						fileType := strconv.FormatUint(uint64(fc.TypeSymbol), 16)
+						if cfg.preserveGroups {
+							basePath = filepath.Join(outputDir, strconv.FormatUint(uint64(fc.FrameIndex), 10), fileType)
+						} else {
+							basePath = filepath.Join(outputDir, fileType)
+						}
 					}
 
 					var fileName string
@@ -240,14 +256,6 @@ func (p *Package) Extract(outputDir string, opts ...ExtractOption) error {
 						fileName = strconv.FormatInt(fc.FileSymbol, 10)
 					} else {
 						fileName = strconv.FormatUint(uint64(fc.FileSymbol), 16)
-					}
-					fileType := strconv.FormatUint(uint64(fc.TypeSymbol), 16)
-
-					var basePath string
-					if cfg.preserveGroups {
-						basePath = filepath.Join(outputDir, strconv.FormatUint(uint64(fc.FrameIndex), 10), fileType)
-					} else {
-						basePath = filepath.Join(outputDir, fileType)
 					}
 
 					// Thread-safe directory creation
@@ -309,6 +317,7 @@ type extractConfig struct {
 	preserveGroups bool
 	decimalNames   bool
 	allowedTypes   map[int64]bool
+	typeMapping    map[int64]string
 }
 
 // ExtractOption configures extraction behavior.
@@ -325,6 +334,13 @@ func WithPreserveGroups(preserve bool) ExtractOption {
 func WithDecimalNames(decimal bool) ExtractOption {
 	return func(c *extractConfig) {
 		c.decimalNames = decimal
+	}
+}
+
+// WithCustomPaths configures extraction to use specific paths for specific types.
+func WithCustomPaths(mapping map[int64]string) ExtractOption {
+	return func(c *extractConfig) {
+		c.typeMapping = mapping
 	}
 }
 

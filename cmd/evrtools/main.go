@@ -149,42 +149,81 @@ func runExtract() error {
 	}
 	defer pkg.Close()
 
+	var options []manifest.ExtractOption
+	options = append(options,
+		manifest.WithPreserveGroups(preserveGroups),
+		manifest.WithDecimalNames(useDecimalName),
+	)
+
 	var filterTypes []int64
+	typeMapping := make(map[int64]string)
+	useMapping := false
+
 	if exportTypes != "" {
+		// First pass to check for 'models'
+		for _, t := range strings.Split(exportTypes, ",") {
+			if strings.TrimSpace(t) == "models" {
+				useMapping = true
+				break
+			}
+		}
+
 		for _, t := range strings.Split(exportTypes, ",") {
 			switch strings.TrimSpace(t) {
 			case "textures":
-				// Use variables to avoid constant overflow checks for negative int64s
 				t1 := uint64(0xBEAC1969CB7B8861)
 				t2 := uint64(0x4A4C32C49300B8A0)
 				t3 := uint64(0xe2efe7289d5985b8)
 				t4 := uint64(0x489bb35d53ca50e9)
-				filterTypes = append(filterTypes,
-					int64(t1), // -4707359568332879775
-					int64(t2), // 5353709876897953952
-					int64(t3), // -2094201140079393352
-					int64(t4), // 5231972605540061417
-				)
+				if useMapping {
+					typeMapping[int64(t1)] = "beac1969cb7b8861"
+					typeMapping[int64(t2)] = "4a4c32c49300b8a0"
+					typeMapping[int64(t3)] = "e2efe7289d5985b8"
+					typeMapping[int64(t4)] = "489bb35d53ca50e9"
+				} else {
+					filterTypes = append(filterTypes, int64(t1), int64(t2), int64(t3), int64(t4))
+				}
 			case "tints":
-				filterTypes = append(filterTypes,
-					int64(uint64(0x24CBFD54E9A7F2EA)), // Folder: 24cbfd54e9a7f2ea
-					int64(uint64(0x32f30fe361939dee)), // 3671295590506143214
-				)
+				t1 := uint64(0x24CBFD54E9A7F2EA)
+				t2 := uint64(0x32f30fe361939dee)
+				if useMapping {
+					typeMapping[int64(t1)] = "24cbfd54e9a7f2ea"
+					typeMapping[int64(t2)] = "32f30fe361939dee"
+				} else {
+					filterTypes = append(filterTypes, int64(t1), int64(t2))
+				}
 			case "audio":
-				filterTypes = append(filterTypes,
-					int64(uint64(0x6d358eef7bb85a98)), // Audio folder
-				)
+				t1 := uint64(0x6d358eef7bb85a98)
+				if useMapping {
+					typeMapping[int64(t1)] = "6d358eef7bb85a98"
+				} else {
+					filterTypes = append(filterTypes, int64(t1))
+				}
+			case "models":
+				m1 := uint64(0xe642bfb1abcf76df)
+				m2 := uint64(0xe7a8ab5ceaef49cb)
+				m3 := uint64(0x4e426f88c1b5d7ac)
+				m4 := uint64(0x37102e4b27955a14)
+				m5 := uint64(0xea51a0d76eb90142)
+				m6 := uint64(0x92abd3e1432bf5e8)
+				typeMapping[int64(m1)] = "GPU/CGMeshListResource"
+				typeMapping[int64(m2)] = "GPU/CGInstancedModelResource"
+				typeMapping[int64(m3)] = "Primary/CGMeshListResource"
+				typeMapping[int64(m4)] = "Primary/CGInstancedModelResource"
+				typeMapping[int64(m5)] = "CModelCRWin10"
+				typeMapping[int64(m6)] = "CTransformCRWin10"
 			}
 		}
 	}
 
+	if useMapping {
+		options = append(options, manifest.WithCustomPaths(typeMapping))
+	} else if len(filterTypes) > 0 {
+		options = append(options, manifest.WithTypeFilter(filterTypes))
+	}
+
 	fmt.Println("Extracting files...")
-	if err := pkg.Extract(
-		outputDir,
-		manifest.WithPreserveGroups(preserveGroups),
-		manifest.WithDecimalNames(useDecimalName),
-		manifest.WithTypeFilter(filterTypes),
-	); err != nil {
+	if err := pkg.Extract(outputDir, options...); err != nil {
 		return fmt.Errorf("extract: %w", err)
 	}
 
