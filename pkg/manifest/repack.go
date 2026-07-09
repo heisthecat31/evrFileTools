@@ -24,7 +24,8 @@ var (
 		New: func() interface{} {
 			enc, _ := zstd.NewWriter(nil,
 				zstd.WithEncoderCRC(false),
-				zstd.WithSingleSegment(true),
+				zstd.WithSingleSegment(false),
+				zstd.WithWindowSize(256*1024),
 			)
 			return enc
 		},

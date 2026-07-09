@@ -185,7 +185,8 @@ func (b *Builder) addFileToManifest(manifest *Manifest, file ScannedFile, frameI
 func (b *Builder) writeFrame(manifest *Manifest, data *bytes.Buffer, index uint32) error {
 	enc, err := zstd.NewWriter(nil,
 		zstd.WithEncoderCRC(false),
-		zstd.WithSingleSegment(true),
+		zstd.WithSingleSegment(false),
+		zstd.WithWindowSize(256*1024),
 		zstd.WithEncoderLevel(zstd.EncoderLevelFromZstd(b.compressionLevel)))
 	if err != nil {
 		return fmt.Errorf("create encoder: %w", err)

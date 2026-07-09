@@ -292,6 +292,32 @@ func (p *Package) Extract(outputDir string, opts ...ExtractOption) error {
 			if frame.Length == 0 || frame.CompressedSize == 0 {
 				continue
 			}
+
+			// Check if this frame contains any files we want to extract
+			needsExtraction := false
+			if cfg.typeMapping != nil || len(cfg.allowedTypes) > 0 {
+				contents := frameIndex[uint32(frameIdx)]
+				for _, fc := range contents {
+					if cfg.typeMapping != nil {
+						if _, ok := cfg.typeMapping[fc.TypeSymbol]; ok {
+							needsExtraction = true
+							break
+						}
+					} else {
+						if cfg.allowedTypes[fc.TypeSymbol] {
+							needsExtraction = true
+							break
+						}
+					}
+				}
+			} else {
+				needsExtraction = true // No filters, extract all
+			}
+
+			if !needsExtraction {
+				continue
+			}
+
 			select {
 			case jobs <- job{frameIdx, frame}:
 			case <-errs:

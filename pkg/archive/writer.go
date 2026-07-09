@@ -56,6 +56,7 @@ func NewWriter(dst io.WriteSeeker, uncompressedSize uint64, opts ...WriterOption
 
 	enc, err := zstd.NewWriter(dst,
 		zstd.WithEncoderCRC(false),
+		zstd.WithWindowSize(256*1024),
 		zstd.WithEncoderLevel(zstd.EncoderLevelFromZstd(w.level)))
 	if err != nil {
 		return nil, fmt.Errorf("create zstd writer: %w", err)

@@ -28,6 +28,7 @@ type Manifest struct {
 	FrameContents []FrameContent
 	Metadata      []FileMetadata
 	Frames        []Frame
+	IsRad16       bool
 }
 
 // Header contains manifest metadata and section information.
@@ -92,7 +93,7 @@ func (m *Manifest) FileCount() int {
 // UnmarshalBinary decodes a manifest from binary data.
 // Uses direct decoding for better performance.
 func (m *Manifest) UnmarshalBinary(data []byte) error {
-	if len(data) < HeaderSize {
+	if len(data) < 192 {
 		return fmt.Errorf("data too short for header")
 	}
 
@@ -105,17 +106,24 @@ func (m *Manifest) UnmarshalBinary(data []byte) error {
 	m.Header.Unk2 = binary.LittleEndian.Uint64(data[offset:])
 	offset += 8
 
+	// Detect rad16
+	m.IsRad16 = binary.LittleEndian.Uint64(data[offset:]) == 0 && binary.LittleEndian.Uint64(data[offset+8:]) != 0
+
+	if m.IsRad16 {
+		offset += 8 // Skip Unk3 (extra padding in rad16)
+	}
+
 	// FrameContents section
 	decodeSection(&m.Header.FrameContents, data[offset:])
-	offset += SectionSize + 16 // +16 for padding
+	offset += 48 + 16 // +16 for padding
 
 	// Metadata section
 	decodeSection(&m.Header.Metadata, data[offset:])
-	offset += SectionSize + 16 // +16 for padding
+	offset += 48 + 16 // +16 for padding
 
 	// Frames section
 	decodeSection(&m.Header.Frames, data[offset:])
-	offset += SectionSize
+	offset += 48
 
 	// Decode FrameContents
 	count := int(m.Header.FrameContents.ElementCount)
@@ -127,7 +135,7 @@ func (m *Manifest) UnmarshalBinary(data []byte) error {
 		m.FrameContents[i].DataOffset = binary.LittleEndian.Uint32(data[offset+20:])
 		m.FrameContents[i].Size = binary.LittleEndian.Uint32(data[offset+24:])
 		m.FrameContents[i].Alignment = binary.LittleEndian.Uint32(data[offset+28:])
-		offset += FrameContentSize
+		offset += 32 // FrameContentSize
 	}
 
 	// Decode Metadata
@@ -139,7 +147,7 @@ func (m *Manifest) UnmarshalBinary(data []byte) error {
 		m.Metadata[i].Unk1 = int64(binary.LittleEndian.Uint64(data[offset+16:]))
 		m.Metadata[i].Unk2 = int64(binary.LittleEndian.Uint64(data[offset+24:]))
 		m.Metadata[i].AssetType = int64(binary.LittleEndian.Uint64(data[offset+32:]))
-		offset += FileMetadataSize
+		offset += 40 // FileMetadataSize
 	}
 
 	// Decode Frames
@@ -150,7 +158,7 @@ func (m *Manifest) UnmarshalBinary(data []byte) error {
 		m.Frames[i].Offset = binary.LittleEndian.Uint32(data[offset+4:])
 		m.Frames[i].CompressedSize = binary.LittleEndian.Uint32(data[offset+8:])
 		m.Frames[i].Length = binary.LittleEndian.Uint32(data[offset+12:])
-		offset += FrameSize
+		offset += 16 // FrameSize
 	}
 
 	return nil

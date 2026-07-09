@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/EchoTools/evrFileTools/pkg/loneecho"
 	"github.com/EchoTools/evrFileTools/pkg/manifest"
 )
 
@@ -26,15 +27,15 @@ var (
 )
 
 func init() {
-	flag.StringVar(&mode, "mode", "", "Operation mode: extract, build")
+	flag.StringVar(&mode, "mode", "", "Operation mode: extract, build, loneecho")
 	flag.StringVar(&packageName, "package", "", "Package name (e.g., 48037dc70b0ecab2)")
-	flag.StringVar(&dataDir, "data", "", "Path to _data directory containing manifests/packages")
+	flag.StringVar(&dataDir, "data", "", "Path to _data directory containing manifests/packages (or win7 dir for loneecho)")
 	flag.StringVar(&inputDir, "input", "", "Input directory for build mode")
 	flag.StringVar(&outputDir, "output", "", "Output directory")
 	flag.BoolVar(&preserveGroups, "preserve-groups", false, "Preserve frame grouping in output")
 	flag.BoolVar(&forceOverwrite, "force", false, "Allow non-empty output directory")
 	flag.BoolVar(&useDecimalName, "decimal-names", false, "Use decimal format for filenames (default is hex)")
-	flag.StringVar(&exportTypes, "export", "", "Comma-separated list of types to export (textures, tints, audio)")
+	flag.StringVar(&exportTypes, "export", "", "Comma-separated list of types to export (textures, models, tints, audio)")
 	flag.BoolVar(&quickMode, "quick", false, "Quick swap mode (appends new package files, updates manifest in-place)")
 }
 
@@ -65,6 +66,14 @@ func run() error {
 		return runExtract()
 	case "build":
 		return runBuild()
+	case "loneecho":
+		if dataDir == "" {
+			return fmt.Errorf("loneecho mode requires -data (path to win7 dir)")
+		}
+		if outputDir == "" {
+			return fmt.Errorf("loneecho mode requires -output (path to extract to)")
+		}
+		return loneecho.Extract(dataDir, outputDir)
 	default:
 		return fmt.Errorf("unknown mode: %s", mode)
 	}
@@ -97,8 +106,12 @@ func validateFlags() error {
 		if packageName == "" {
 			packageName = "package"
 		}
+	case "loneecho":
+		if dataDir == "" {
+			return fmt.Errorf("loneecho mode requires -data")
+		}
 	default:
-		return fmt.Errorf("mode must be 'extract' or 'build'")
+		return fmt.Errorf("mode must be 'extract', 'build', or 'loneecho'")
 	}
 
 	return nil
@@ -206,12 +219,20 @@ func runExtract() error {
 				m4 := uint64(0x37102e4b27955a14)
 				m5 := uint64(0xea51a0d76eb90142)
 				m6 := uint64(0x92abd3e1432bf5e8)
+				m7 := uint64(0xae49fad43254367a)
+				m8 := uint64(0x4a4c32c49300b8a0)
+				m9 := uint64(0xbeac1969cb7b8861)
+				m10 := uint64(0xc2434c5a99e139ce)
 				typeMapping[int64(m1)] = "GPU/CGMeshListResource"
 				typeMapping[int64(m2)] = "GPU/CGInstancedModelResource"
 				typeMapping[int64(m3)] = "Primary/CGMeshListResource"
 				typeMapping[int64(m4)] = "Primary/CGInstancedModelResource"
 				typeMapping[int64(m5)] = "CModelCRWin10"
 				typeMapping[int64(m6)] = "CTransformCRWin10"
+				typeMapping[int64(m7)] = "RawTexturePackfileWin10"
+				typeMapping[int64(m8)] = "cgtextureresourceWin10"
+				typeMapping[int64(m9)] = "beac1969cb7b8861"
+				typeMapping[int64(m10)] = "CGTextureStreamingResourceWin10"
 			}
 		}
 	}
