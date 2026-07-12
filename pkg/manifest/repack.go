@@ -953,7 +953,8 @@ func QuickRepack(manifest *Manifest, fileMap [][]ScannedFile, dataDir, packageNa
 
 	fmt.Println("Writing frames...")
 	newFrames := make([]Frame, 0, len(manifest.Frames))
-	totalFrames := int(manifest.Header.Frames.ElementCount)
+	// Use the actual slice length otherwise REPACKS FAIL!
+	totalFrames := len(manifest.Frames)
 	
 	// Track results for affected frames
 	resByOrigIndex := make(map[int]frameResult)
